@@ -1,73 +1,89 @@
-
-const sqlite3 = require('sqlite3').verbose();
+const Database = require('better-sqlite3');
 const path = require('path');
 const log = require('npmlog');
 const { DB_PATH } = require('./config');
-const absDbPath = path.resolve(DB_PATH);
-const db = new sqlite3.Database(absDbPath, (err) => {
-    if (err) log.error('db', 'Failed to open database:', err.message);
-    else log.info('db', 'Database opened');
-});
 
-// Create tables if not exist
-db.serialize(() => {
-    db.run(`CREATE TABLE IF NOT EXISTS sessions (
-        userId TEXT,
-        phone TEXT,
-        token TEXT,
-        key TEXT,
-        cli TEXT
-    )`);
-    db.run(`CREATE TABLE IF NOT EXISTS users (
-        user_id TEXT PRIMARY KEY,
-        username TEXT,
-        full_name TEXT,
-        session_data TEXT
-    )`);
-});
+// Ensure DB_PATH is set to a file inside the /data directory
+const absDbPath = path.resolve(DB_PATH.startsWith('data/') ? DB_PATH : 'data/sim-bot.db');
+let db;
 
-function saveSessions(userId, sessions, callback) {
-    db.run('DELETE FROM sessions WHERE userId = ?', [userId], function() {
-        const stmt = db.prepare('INSERT INTO sessions (userId, phone, token, key, cli) VALUES (?, ?, ?, ?, ?)');
-        sessions.forEach(sess => {
-            stmt.run(userId, sess.phone, sess.token, sess.key, sess.cli);
-        });
-        stmt.finalize(callback);
-    });
+try {
+    db = new Database(absDbPath);
+    log.info('db', 'Database opened');
+} catch (err) {
+    log.error('db', 'Failed to open database:', err.message);
+    process.exit(1);
 }
 
-function getSessions(userId, callback) {
-    db.all('SELECT phone, token, key, cli FROM sessions WHERE userId = ?', [userId], (err, rows) => {
-        if (err) return callback([]);
-        callback(rows);
+// Create tables if not exist
+db.prepare(`CREATE TABLE IF NOT EXISTS sessions (
+    userId TEXT,
+    phone TEXT,
+    token TEXT,
+    key TEXT,
+    cli TEXT
+)`).run();
+
+db.prepare(`CREATE TABLE IF NOT EXISTS users (
+    user_id TEXT PRIMARY KEY,
+    username TEXT,
+    full_name TEXT,
+    session_data TEXT
+)`).run();
+
+function saveSessions(userId, sessions) {
+    const deleteStmt = db.prepare('DELETE FROM sessions WHERE userId = ?');
+    deleteStmt.run(userId);
+
+    const insertStmt = db.prepare('INSERT INTO sessions (userId, phone, token, key, cli) VALUES (?, ?, ?, ?, ?)');
+    const insertMany = db.transaction((sessions) => {
+        for (const sess of sessions) {
+            insertStmt.run(userId, sess.phone, sess.token, sess.key, sess.cli);
+        }
     });
+
+    insertMany(sessions);
+}
+
+function getSessions(userId) {
+    const stmt = db.prepare('SELECT phone, token, key, cli FROM sessions WHERE userId = ?');
+    try {
+        return stmt.all(userId);
+    } catch (err) {
+        log.error('db', 'Failed to get sessions:', err.message);
+        return [];
+    }
 }
 
 function saveUser(user, sessionData = {}) {
     const fullName = [user.first_name, user.last_name].filter(Boolean).join(' ');
-    db.run(
-        'INSERT OR REPLACE INTO users (user_id, username, full_name, session_data) VALUES (?, ?, ?, ?)',
-        [user.id.toString(), user.username || '', fullName, JSON.stringify(sessionData)],
-        (err) => {
-            if (err) log.error('db', `Failed to save user ${user.id}:`, err.message);
-            else log.info('db', `User saved: ${user.username || ''} (${user.id})`);
-        }
-    );
+    const stmt = db.prepare(`
+        INSERT OR REPLACE INTO users (user_id, username, full_name, session_data)
+        VALUES (?, ?, ?, ?)
+    `);
+
+    try {
+        stmt.run(user.id.toString(), user.username || '', fullName, JSON.stringify(sessionData));
+        log.info('db', `User saved: ${user.username || ''} (${user.id})`);
+    } catch (err) {
+        log.error('db', `Failed to save user ${user.id}:`, err.message);
+    }
 }
 
-function getSession(userId, cb) {
-    db.get('SELECT session_data FROM users WHERE user_id = ?', [userId], (err, row) => {
-        if (err) {
-            log.error('db', `Failed to get session for ${userId}:`, err.message);
-            return cb(null);
-        }
+function getSession(userId) {
+    const stmt = db.prepare('SELECT session_data FROM users WHERE user_id = ?');
+    try {
+        const row = stmt.get(userId);
         if (!row) {
             log.info('db', `No session found for ${userId}`);
-            return cb(null);
+            return null;
         }
         log.info('db', `Session loaded for ${userId}`);
-        cb(JSON.parse(row.session_data));
-    });
+        return JSON.parse(row.session_data);
+    } catch (err) {
+        log.error('db', `Failed to get session for ${userId}:`, err.message);
+        return null;
+    }
 }
 
 module.exports = {

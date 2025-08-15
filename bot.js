@@ -35,6 +35,52 @@ function getResendCancelInlineKeyboard() {
 
 const DEFAULT_LANG = 'bn';
 
+// Ping command
+bot.onText(/\/ping/, (msg) => {
+    const chatId = msg.chat.id;
+    const start = Date.now();
+    bot.sendMessage(chatId, '🏓 Pong!').then(() => {
+        const latency = Date.now() - start;
+        bot.sendMessage(chatId, `Latency: ${latency} ms`);
+    });
+});
+
+// Uptime command
+bot.onText(/\/uptime/, (msg) => {
+    const chatId = msg.chat.id;
+    const uptimeMs = Date.now() - botStartTime;
+    const seconds = Math.floor((uptimeMs / 1000) % 60);
+    const minutes = Math.floor((uptimeMs / (1000 * 60)) % 60);
+    const hours = Math.floor((uptimeMs / (1000 * 60 * 60)) % 24);
+    const days = Math.floor(uptimeMs / (1000 * 60 * 60 * 24));
+    let uptimeStr = '';
+    if (days) uptimeStr += `${days}d `;
+    if (hours) uptimeStr += `${hours}h `;
+    if (minutes) uptimeStr += `${minutes}m `;
+    uptimeStr += `${seconds}s`;
+    bot.sendMessage(chatId, `⏱ Uptime: ${uptimeStr}`);
+});
+
+// Start command
+bot.onText(/\/start/, (msg) => {
+    const chatId = msg.chat.id;
+    bot.sendMessage(chatId, 'Welcome to Smart1216Bot! Use /help to see available commands.');
+});
+
+// Help command
+bot.onText(/\/help/, (msg) => {
+    const chatId = msg.chat.id;
+    bot.sendMessage(chatId,
+        `Available commands:\n` +
+        `/start - Welcome message\n` +
+        `/help - Show this help\n` +
+        `/ping - Check bot responsiveness\n` +
+        `/uptime - Show bot uptime\n` +
+        `/login - Start login process\n` +
+        `/home - Go to home menu`
+    );
+});
+
 bot.onText(/\/login(new)?$/, (msg) => {
     const chatId = msg.chat.id;
     userLoginState[chatId] = { step: 'awaiting_phone' };
